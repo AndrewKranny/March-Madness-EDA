@@ -1,0 +1,230 @@
+---
+title: "MarchMadness"
+author: "Andrew Kranjec"
+date: "2023-03-08`"
+output:
+  pdf_document: default
+  html_document: default
+---
+
+Introduction and Disclaimer
+-
+This is a fun project I have been working on that utilizes NCAA Basketball statistics obtained from KenPom.com, attempting to create a ranking system that I will use to make my predictions for the March Madness tournament. This is purely for fun, and to use data science techniques that I have learned in class, and to expand on my knowledge of data science. Due to the majority of the KenPom statistics being behind a paywall, I will only share small amounts of the data used. 
+
+Although some of the calculations in this script are mathematically and statistically significant, the final product should NOT be taken as fact. There is no way to perfectly predict any basketball game, or any sporting event, beacuse there are too many variables that cannot be predicted by mathematical analysis. 
+
+
+# Importing libraries
+```{r setup, include = TRUE}
+rm(list=ls())
+library('tidyverse')
+library('modelr')
+library('gapminder')
+library('leaps')
+library('tinytex')
+```
+
+# Importing Datasets
+```{r, message = FALSE}
+season24 <- read_csv('summary24.csv')
+offfour <- read_csv('offenseff24.csv')
+deffour <- read_csv('defenseff24.csv')
+pointdist <- read_csv('pointdist24.csv')
+offmisc <- read_csv('miscoff24.csv')
+defmisc <- read_csv('miscdef24.csv')
+height <- read_csv('height24.csv')
+schedule <- read_csv('SoSchedule24.csv')
+```
+
+Describing the Datasets
+-
+season24: This dataset includes lots of important statistics for every D1 basketball team. It includes: AdjOE (Offensive Efficieny), AdjDE (Defensive Efficieny), Tempo, and AdjEM (Efficiency Margin) to name just a few.
+
+offfour: This dataset includes Offensive statistics for every D1 Basketball team. It includes: eFGPct (Effective Field Goal Percentage), TOPct (Turnover Percent), ORPct (Offensive Rebounding Percentage), and FTRate (Free Throw Rate)
+
+Deffour: This dataset includes Deffensive Statistics for every D1 Basketball team. It includes: eFGPct (Effective Field Goal Percentage of Opposing teams), TOPct (Turnover Percent of Opposing teams), ORPct (Offensive Rebounding Percentage of opposing teams), and FTRate (Free Throw Rate of opposing teams)
+
+offmisc: This dataset includes miscelaneous offensive statistics for every D1 Basketball team. It includes: FG2Pct (2-point field goal percentage), FG3Pct (3-point field goal percentage), FTPct (Free throw percentage), BlockPct (Block percentage), and NSTPct (Non-Steal Turnover Percentage)
+
+defmisc: This dataset includes miscelaneous defensive statistics for every D1 Basketball team. It includes: OppFG2Pct (2-point field goal percentage for opposing teams), OppFG3Pct (3-point field goal percentage of opposing teams), OppFTPct (Free throw percentage for opposing teams), OppBlockPct (Block percentage of opposing teams), and OppNSTPct (Non-steal turnover percentage of opposing teams)
+
+height: This dataset includes the height statistics for every D1 basketball team. The only stat from this dataset that I used was Size (The average height of each team)
+
+schedule: This dataset is a dataset I created that has the winloss ratio of each team (variable named winloss), and the strength of schedule of each team (variable named SOS). This dataset also only includes teams that are included in the March Madness tournament.
+
+## Editing the schedule dataset to include win percentage of each team
+```{r, message = FALSE}
+winloss_fixed <- schedule %>%
+  separate(winloss, into = c("win", "loss"), sep = "/") %>%
+  mutate(win=parse_number(win),loss = parse_number(loss)) %>%
+  mutate(winrate = (win / (win+loss))*100)
+```
+```{r table1, message = FALSE, warning = FALSE, echo = FALSE}
+knitr::kable(
+  winloss_fixed[1:10,]
+)
+```
+
+## Editing deffour to decipher between Offensive and Defensive stats
+
+```{r, message = FALSE}
+deffour_new <- deffour %>%
+  mutate(DeFGPct = eFGPct, DTOPct = TOPct, DORPct = ORPct, DFTRate = FTRate) %>%
+  select(TeamName, DeFGPct, DTOPct, DORPct, DFTRate)
+```
+
+Combining all the datasets into a single dataset for easier calculations and data manipulation
+-
+The resulting dataset totalData includes all of the statistics I was interested in, and removed the statistics I was not terribly interested in. Also, by using the semi_join function to create the data8 dataset, it removed all of the teams that are not invloved in the March Madness tournament.
+
+```{r, message = FALSE}
+data1 <- left_join(season24, winloss_fixed)
+data2 <- left_join(data1, offfour)
+data3 <- left_join(data2, deffour_new)
+data4 <- left_join(data3, pointdist)
+data5 <- left_join(data4, offmisc)
+data6 <- left_join(data5, defmisc)
+data7 <- left_join(data6, height)
+data8 <- semi_join(data7, schedule)
+
+totalData <- data8 %>%
+  select(TeamName, Conference, AdjTempo, AdjOE, AdjDE, AdjEM, eFGPct, TOPct, ORPct,
+         FTRate, DeFGPct, DTOPct, DORPct, DFTRate, FG2Pct, FG3Pct, FTPct,
+         BlockPct, FG3Rate, ARate, StlRate, NSTRate, OppFG2Pct, OppFG3Pct,
+         OppFTPct, OppBlockPct, OppFG3Rate, OppARate, OppStlRate, OppNSTRate, 
+         Size, SOS, winrate)
+```
+
+Editing the totalData dataset
+-
+Now, because all of the stats are computed differently, each stat has a different range of values. To compensate for this, and to make it so each stat has the same value range, I simply just took each individual stat and divided it by the maximum stat for each variable. Because of this calculation, every statistic has the range of values no matter the variable. This dataset also includes the SOS variable which I had to edit because the range of values is different from the other variables but because I wanted to give a lot of weight to the strength of schedule I created an exponential function that made it so that teams with a good strength of schedule rating would benefit more than teams with a lower strength of schedule at a scale that increased as strength of schedule increased. The new, resulting dataset is totalDataPct. 
+
+``` {r, message = FALSE}
+totalDataPct <- mutate(totalData,
+         AdjTempoPct = AdjTempo / max(AdjTempo),
+         AdjOEPct = AdjOE / max(AdjOE),
+         AdjDEPct = 1-(AdjDE / max(AdjDE)),
+         AdjEMPct = AdjEM / max(AdjEM),
+         OeFGPctPct = eFGPct / max(eFGPct),
+         OTOPctPct = TOPct / max(TOPct),
+         ORPctPct = ORPct / max(ORPct),
+         OFTRatePct = FTRate / max(FTRate),
+         DeFGPctPct = 1-(eFGPct / max(eFGPct)),
+         DTOPctPct = TOPct / max(TOPct),
+         DFTRatePct = 1-(FTRate / max(FTRate)),
+         FG2PctPct = FG2Pct / max(FG2Pct),
+         FG3PctPct = FG3Pct / max(FG3Pct),
+         FTPctPct = FTPct / max(FTPct),
+         BlockPctPct = BlockPct / max(BlockPct),
+         FG3RatePct = FG3Rate / max(FG3Rate),
+         ARatePct = ARate / max(ARate),
+         StlRatePct = StlRate / max(StlRate),
+         NSTRatePct = 1-(NSTRate / max(NSTRate)),
+         OppFG2PctPct = 1-(OppFG2Pct / max(OppFG2Pct)),
+         OppFG3PctPct = 1-(OppFG3Pct / max(OppFG3Pct)),
+         OppFTPctPct = 1-(OppFTPct / max(OppFTPct)),
+         OppBlockPctPct = 1-(OppBlockPct / max(OppBlockPct)),
+         OppFG3RatePct = 1-(OppFG3Rate / max(OppFG3Rate)),
+         OppARatePct = 1-(OppARate / max(OppARate)),
+         OppStlRatePct = 1-(OppStlRate / max(OppStlRate)),
+         OppNSTRatePct = OppNSTRate / max(OppNSTRate),
+         SizePct = Size / max(Size),
+         SOS = SOS,
+         SOS = (SOS+abs(min(SOS)))/max(SOS),
+         SOS = SOS/max(SOS)*exp(1.85*SOS)) %>%
+  select(TeamName, AdjTempoPct:SizePct, SOS, winrate)
+```
+
+Determining the best linear model for every set of variables for Offense and Defense
+-
+Using the regsubsets from the 'leaps' library, I can feed R all of the offensive and defensive stats, and it will return the model that is best fit for each set of variables. For example, determining the best model for offensive stats it will return one variable that is best at predicting the winrate, then it will return two stats that make the best model to determine the winrate, and so on until it returns a model that is best fit utilizing every variable that I give it. 
+
+```{r, message = FALSE}
+ModelOffense <- regsubsets(winrate ~ AdjTempoPct + AdjOEPct + AdjEMPct + OeFGPctPct - OTOPctPct + ORPctPct +
+                     OFTRatePct + FG2PctPct + FG3PctPct + FTPctPct + NSTRatePct + BlockPctPct + FG3RatePct + 
+                       ARatePct + StlRatePct + SizePct, totalDataPct, nbest=1, nvmax = 15)
+ModelDefense <- regsubsets(winrate ~ AdjDEPct + DeFGPctPct + DTOPctPct + DFTRatePct + NSTRatePct + 
+                             OppFG2PctPct + OppFG3PctPct + OppFTPctPct + OppBlockPctPct + OppFG3RatePct +
+                             OppARatePct, totalDataPct, nbest=1, nvmax=20)
+```
+
+# The resulting models
+## Offensive
+
+```{r, message = FALSE}
+summary(ModelOffense)
+```
+
+## Defensive
+```{r, message = FALSE}
+summary(ModelDefense)
+```
+
+Describing Models
+-
+For the resulting offensive models, I selected the model that included 9 of the variables that I fed into the function. For the resulting defensive models, I also selected the model that included 9 of the variables that I fed into the function. I then created linear models of these models, in order to find the coefficients of each variable when in a linear model.
+
+```{r, message = FALSE}
+lmOffense <- lm(winrate ~ AdjOEPct + AdjEMPct + OeFGPctPct + ORPctPct + OFTRatePct +
+                  FTPctPct + NSTRatePct + SizePct, data = totalDataPct)
+lmDefense <- lm(winrate ~ AdjDEPct + DeFGPctPct + DTOPctPct + DFTRatePct + NSTRatePct + OppFG2PctPct +
+                  OppFG3PctPct + OppFTPctPct, data = totalDataPct)
+```
+
+## Linear Models Summary
+
+```{r, message = FALSE}
+summary(lmOffense)
+summary(lmDefense)
+```
+-
+As you can see, the functions returned the coefficients of each variable included in the respective linear models. It also shows us whether or not every individual variable is statistically significant or not when included in the model. The majority of the variables in both models are statistically significant, making these models pretty strong when it comes to predictions. The coefficients will effectively become modifiers moving forward, so that every team can get a score or a ranking based on their previous stats using the linear models previously created.
+
+## Creating Scores for each team
+
+```{r, message = FALSE}
+totalDataPct <- totalDataPct %>%
+  mutate(OffensiveRating = summary(lmOffense)$coefficients[1, 1] + summary(lmOffense)$coefficients[2, 1]*totalDataPct$AdjOEPct + summary(lmOffense)$coefficients[3, 1]*totalDataPct$AdjEMPct +
+           summary(lmOffense)$coefficients[4, 1]*totalDataPct$OeFGPctPct + summary(lmOffense)$coefficients[5, 1]*totalDataPct$ORPctPct + summary(lmOffense)$coefficients[6, 1]*totalDataPct$OFTRatePct +
+           summary(lmOffense)$coefficients[7, 1]*totalDataPct$FTPctPct + summary(lmOffense)$coefficients[8, 1]*totalDataPct$NSTRatePct + summary(lmOffense)$coefficients[9, 1]*totalDataPct$SizePct) %>%
+  mutate(DefensiveRating = summary(lmDefense)$coefficients[1, 1] + summary(lmDefense)$coefficients[2, 1]*totalDataPct$AdjDEPct + summary(lmDefense)$coefficients[3, 1]*totalDataPct$DeFGPctPct +
+           summary(lmDefense)$coefficients[4, 1]*totalDataPct$DTOPctPct + summary(lmDefense)$coefficients[5, 1]*totalDataPct$DFTRatePct + summary(lmDefense)$coefficients[6, 1]*totalDataPct$NSTRatePct +
+           summary(lmDefense)$coefficients[7, 1]*totalDataPct$OppFG2PctPct + summary(lmDefense)$coefficients[8, 1]*totalDataPct$OppFG3PctPct + summary(lmDefense)$coefficients[9, 1]*totalDataPct$OppFTPctPct) %>%
+  mutate(TotalRating = OffensiveRating + DefensiveRating) %>%
+  mutate(AdjTotalRating = TotalRating + SOS) %>%
+  mutate(randomRating1 = 0) %>%
+  mutate(randomRating2 = 0) %>%
+  mutate(randomRating3 = 0)
+```
+-
+This code is creating new variables for OffensiveRating and DefensiveRating, both of which are using the linear models that were created previously. It also is creating a TotalRating variable which is just the sum of the offensive and defensive rating variables. It also created a AdjTotalRating variable which is just the sum of TotalRating and the SOS stat that I created earlier. Also included are 3 randomRating variables which are just filled with 0's which I will discuss later.
+
+Adding a Random Element
+-
+Because sports can only predicted to a certain extent, I thought it would be fun to add a random element, just to see the results. For randomRating1, each AdjTotalRating is multiplied by a random modifier between 1+-0.2, randomRating2 is multiplied by a random modifier between 1+-0.3, and randomRating3 is multiplied by a random modifier between 1+-0.5. This is purely for fun and holds no mathematical significance. The code to create these ratings is below:
+
+```{r, message = FALSE}
+for (i in 1:nrow(totalDataPct)) {
+  x <- runif(1, min = 0.8, max = 1.2)
+  totalDataPct[i,36] <- totalDataPct[i,35]*x
+  y <- runif(1, min = 0.7, max = 1.3)
+  totalDataPct[i,37] <- totalDataPct[i,35]*y
+  z <- runif(1, min = 0.5, max = 1.5)
+  totalDataPct[i,38] <- totalDataPct[i,35]*z
+}
+```
+
+## Making a dataset that is easier to read
+
+```{r, message = FALSE}
+totalRankings <- totalDataPct %>%
+  select(TeamName, OffensiveRating, DefensiveRating, TotalRating, AdjTotalRating, randomRating1, randomRating2, randomRating3)
+```
+```{r table2, message = FALSE, warning = FALSE, echo = FALSE}
+knitr::kable(
+  totalRankings[1:25,]
+)
+```
+-
+As you can see, this dataset only includes the rating variables from the totalDataPct dataset.
+
